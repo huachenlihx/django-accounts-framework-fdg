@@ -1,0 +1,13 @@
+Hello {{ display_name }},
+
+Thank you for registering at {{ site_name }}.
+
+Activate your account by visiting the link below. This link is valid for {{ expiry_hours }} hours:
+
+{{ activation_url }}
+
+If you did not create this account, you can safely ignore this email.
+
+{{ site_name }}
+Support: {{ support_email|default:default_from_email }}
+Sent: {{ timestamp }}

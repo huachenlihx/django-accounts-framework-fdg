@@ -1,0 +1,6 @@
+{% extends "accounts/emails/base_email.html" %}
+{% block content %}
+<p style="margin:0 0 16px">Hello <strong>{{ display_name }}</strong>,</p>
+<p>Your account is ready.</p>
+<p><a href="{{ frontend_url }}" style="color:{{ brand_color|default:'#c41a5a' }}">Open the application</a></p>
+{% endblock %}

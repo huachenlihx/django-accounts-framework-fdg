@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ subject }}</title>
+</head>
+<body style="font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:20px">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.1);overflow:hidden">
+    <div style="background:{{ brand_color|default:'#c41a5a' }};padding:20px 24px;text-align:left">
+      {% if logo_url %}
+        <img src="{{ logo_url }}" alt="{{ site_name }}" style="max-height:56px;max-width:260px;background:#fff;border-radius:4px;padding:6px;margin-bottom:10px">
+      {% endif %}
+      <h1 style="color:#fff;margin:0;font-size:20px">{{ site_name }}</h1>
+    </div>
+    <div style="padding:28px 24px">
+      {% block content %}{% endblock %}
+      <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+      <p style="margin:0;color:#999;font-size:12px">
+        If you need help, contact {{ support_email|default:default_from_email }}.<br>
+        Sent: {{ timestamp }}
+      </p>
+    </div>
+  </div>
+</body>
+</html>

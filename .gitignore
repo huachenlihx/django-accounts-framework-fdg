@@ -1,0 +1,41 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode and tooling caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Packaging artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Local runtime data and secrets
+.env
+.env.*
+!.env.example
+*.sqlite3
+*.sqlite3-journal
+*.log
+local_settings.py
+token.txt
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Scratch and local-only content
+*.swp
+*.swo

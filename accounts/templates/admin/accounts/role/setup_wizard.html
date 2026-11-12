@@ -1,0 +1,89 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<div id="content-main">
+  <h1>Role Setup Wizard</h1>
+
+  <p>
+    This wizard creates or updates recommended Django Groups used as business roles.
+    It does not run automatically during migrations. Use it after creating a new database
+    and running migrations for all installed apps.
+  </p>
+
+  <p>
+    You can find this page from:
+    <strong>Django Admin → Accounts → Role Setup Wizard</strong>
+    or from the <strong>Roles</strong> page.
+  </p>
+
+  <form method="post" style="margin: 1.5rem 0;">
+    {% csrf_token %}
+
+    <fieldset class="module aligned">
+      <h2>Options</h2>
+      <div class="form-row">
+        <label>
+          <input type="checkbox" name="reset_existing" value="1">
+          Reset existing role permissions to exactly match the preset
+        </label>
+        <p class="help">
+          Leave unchecked to only add missing permissions while preserving any existing custom permissions.
+        </p>
+      </div>
+    </fieldset>
+
+    <div class="submit-row">
+      <input type="submit" class="default" value="Create / Update Recommended Roles">
+      <a class="button cancel-link" href="{% url 'admin:accounts_role_changelist' %}">Back to Roles</a>
+    </div>
+  </form>
+
+  <h2>Preview</h2>
+
+  {% for role in role_preview %}
+    <div class="module" style="padding: 12px; margin-bottom: 14px;">
+      <h3>{{ role.name }}</h3>
+      <p>{{ role.description }}</p>
+
+      {% if role.exists %}
+        <p><strong>Status:</strong> Existing role</p>
+      {% else %}
+        <p><strong>Status:</strong> Will be created</p>
+      {% endif %}
+
+      <p><strong>Permissions to assign:</strong></p>
+      {% if role.permission_codes %}
+        <ul>
+          {% for code in role.permission_codes %}
+            <li><code>{{ code }}</code></li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p>No permissions resolved.</p>
+      {% endif %}
+
+      {% if role.missing_permission_codes %}
+        <p style="color:#b36b00;"><strong>Missing permissions:</strong></p>
+        <ul>
+          {% for code in role.missing_permission_codes %}
+            <li><code>{{ code }}</code></li>
+          {% endfor %}
+        </ul>
+        <p class="help">
+          Missing permissions usually mean migrations for the feature app have not been run yet.
+        </p>
+      {% endif %}
+
+      {% if role.will_add_codes %}
+        <p><strong>Will add:</strong></p>
+        <ul>
+          {% for code in role.will_add_codes %}
+            <li><code>{{ code }}</code></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

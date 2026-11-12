@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "django-accounts-framework-fdg"
+version = "0.1.0"
+description = "Reusable Django authentication, user management, and role framework"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+authors = [
+    { name = "Hua Chen" }
+]
+keywords = [
+    "django",
+    "authentication",
+    "accounts",
+    "permissions",
+    "roles",
+    "rest-framework"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Django",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "Django>=6.0,<7.0",
+    "djangorestframework>=3.16,<4.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["accounts", "accounts.*"]
+
+[tool.setuptools.package-data]
+accounts = [
+    "templates/**/*.html",
+    "templates/**/*.txt",
+]
