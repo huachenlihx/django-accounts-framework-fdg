@@ -2,7 +2,7 @@
 
 A reusable Django authentication and role-management application built with **Django REST Framework**. It provides email-based accounts, session authentication, activation and password recovery, a custom user model with public UUIDs, user administration, and Django Group-based roles.
 
-> **Release status:** Version `0.1.0` is published on [PyPI](https://pypi.org/project/django-accounts-framework-fdg/). The package has passed an independent Django installation, migration, and Accounts test run (26 tests). Evaluate and test its suitability for your application before production use. This package provides its own user model and is intended primarily for **new** Django projects.
+> **Release status:** Version `0.2.0` is being prepared for publication on [PyPI](https://pypi.org/project/django-accounts-framework-fdg/). Version `0.1.0` has been published and was independently installed, migrated, and tested in a fresh Django project (26 Accounts tests). The updated `0.2.0` implementation needs its own complete test run before release. This package supplies a custom user model and is intended primarily for **new** Django projects.
 
 ## Features
 
@@ -11,7 +11,9 @@ A reusable Django authentication and role-management application built with **Dj
 - A custom `accounts.User` model with a random, unique `public_id` UUID for public API references.
 - Forced-password-change middleware with configurable protected paths and exemptions.
 - Django Groups, multiple roles per user, permission checks, and a Django Admin Role Setup Wizard.
-- Configurable project branding, frontend links, activation behavior, and email templates.
+- Configurable project branding, frontend links, activation behavior, supported locales, and email templates.
+- Password validation through the host project’s `AUTH_PASSWORD_VALIDATORS` for account creation and password changes.
+- Configurable activation-link expiry and renewal when a new activation link is requested.
 - Django system checks for important configuration requirements.
 
 **Security boundary:** UUIDs are opaque identifiers, not authorization. Each project must still enforce authentication, permissions, and object ownership. The Accounts app does not replace a project's CORS, CSRF, HTTPS, or session-cookie configuration.
@@ -29,7 +31,7 @@ python -m pip install -e .
 After building a wheel with `python -m build`, you can also install that wheel into a **fresh virtual environment** to validate the packaged distribution:
 
 ```bash
-python -m pip install path/to/django_accounts_framework_fdg-0.1.0-py3-none-any.whl
+python -m pip install path/to/django_accounts_framework_fdg-0.2.0-py3-none-any.whl
 ```
 
 Install the published package from PyPI:
@@ -115,10 +117,13 @@ ACCOUNTS_FRAMEWORK = {
     "ACTIVATION_TOKEN_EXPIRY_HOURS": 24,
     "PASSWORD_RESET_EXPIRY_HOURS": 2,
     "SEND_WELCOME_EMAIL": False,
+    "SUPPORTED_LOCALES": ["en", "fr"],  # Example: choose languages supported by your project.
     "ROLE_PRESETS": [],  # Define the new project's groups/permissions.
     "MANAGER_ASSIGNABLE_ROLES": [],
 }
 ```
+
+The `SUPPORTED_LOCALES` value above is an example, not a required default. Configure only locales your project supports; invalid values are reported by the Accounts configuration checks. Passwords are validated against your project’s `AUTH_PASSWORD_VALIDATORS`, so configure those validators in Django settings as well.
 
 Set up a working Django email backend and sender identity in the host project. Ensure activation and reset paths exist in your frontend. Never commit SMTP credentials, database passwords, or Django secret keys.
 
@@ -171,7 +176,7 @@ With `must_change_password=True`:
 - `accounts.User.public_id` is the UUID intended for public account identifiers; internal integer database primary keys remain an implementation detail.
 - Administration endpoints that target users accept `user_public_id` rather than exposing a database ID.
 - Django Groups and permissions are referenced by Group name and permission code (`app_label.codename`), not public numeric IDs.
-- A non-superuser holding `accounts.manage_users` may assign only Groups listed in `MANAGER_ASSIGNABLE_ROLES`. Keep this allowlist limited to low-privilege roles; the `Administrator` role is superuser-only to assign.
+- A non-superuser holding `accounts.manage_users` may assign only Groups listed in `MANAGER_ASSIGNABLE_ROLES`. Keep this allowlist limited to low-privilege roles; the `Administrator` role is superuser-only to assign. Delegated user management in Django Admin should follow the same restriction.
 
 Representative routes when mounted under `/api/`:
 
@@ -219,7 +224,7 @@ python manage.py migrate
 python manage.py test accounts
 ```
 
-Test registration, session login, activation and password recovery, CSRF/cookies, forced password changes, administrative permissions, and the Role Setup Wizard. Validate against each database engine and Python/Django version you intend to support.
+Test registration, session login, activation expiry and resend, password validation and recovery, CSRF/cookies, forced password changes, delegated administrative permissions, and the Role Setup Wizard. Validate against each database engine and Python/Django version you intend to support.
 
 To build and validate the distribution from this repository:
 
@@ -237,7 +242,8 @@ Verify that the wheel includes `accounts/migrations/` and email templates, and t
 - This package ships a concrete custom User model. Adopt it at project initialization, not as an unplanned replacement for an established user schema.
 - The account API's JSON shapes and internal route names are part of its public integration contract.
 - The package does not host your frontend, configure SMTP credentials, or automatically manage allowed cross-origin browser requests.
-- The initial public release is `0.1.0`. Check [PyPI](https://pypi.org/project/django-accounts-framework-fdg/) for available versions and verify compatibility with your application before upgrading.
+- **Migration compatibility:** The planned `0.2.0` release retains a regenerated `accounts/migrations/0001_initial.py` instead of an incremental `0002` migration. It is intended for fresh databases. Do **not** assume an existing database migrated under `0.1.0` can upgrade directly; a separate schema/data migration plan is required. Never delete an existing database to upgrade without preserving its data.
+- Published release: `0.1.0`. Check [PyPI](https://pypi.org/project/django-accounts-framework-fdg/) for the current version; `0.2.0` should only be described as published after its upload succeeds.
 
 ## License
 
