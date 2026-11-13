@@ -2,7 +2,7 @@
 
 A reusable Django authentication and role-management application built with **Django REST Framework**. It provides email-based accounts, session authentication, activation and password recovery, a custom user model with public UUIDs, user administration, and Django Group-based roles.
 
-> **Release status:** Version `0.2.0` is being prepared for publication on [PyPI](https://pypi.org/project/django-accounts-framework-fdg/). Version `0.1.0` has been published and was independently installed, migrated, and tested in a fresh Django project (26 Accounts tests). The updated `0.2.0` implementation needs its own complete test run before release. This package supplies a custom user model and is intended primarily for **new** Django projects.
+> **Current release:** [Version 0.2.1 on PyPI](https://pypi.org/project/django-accounts-framework-fdg/0.2.1/). This package supplies a custom user model and is intended primarily for new Django projects.
 
 ## Features
 
@@ -31,7 +31,7 @@ python -m pip install -e .
 After building a wheel with `python -m build`, you can also install that wheel into a **fresh virtual environment** to validate the packaged distribution:
 
 ```bash
-python -m pip install path/to/django_accounts_framework_fdg-0.2.0-py3-none-any.whl
+python -m pip install path/to/django_accounts_framework_fdg-0.2.1-py3-none-any.whl
 ```
 
 Install the published package from PyPI:
@@ -242,9 +242,15 @@ Verify that the wheel includes `accounts/migrations/` and email templates, and t
 - This package ships a concrete custom User model. Adopt it at project initialization, not as an unplanned replacement for an established user schema.
 - The account API's JSON shapes and internal route names are part of its public integration contract.
 - The package does not host your frontend, configure SMTP credentials, or automatically manage allowed cross-origin browser requests.
-- **Migration compatibility:** The planned `0.2.0` release retains a regenerated `accounts/migrations/0001_initial.py` instead of an incremental `0002` migration. It is intended for fresh databases. Do **not** assume an existing database migrated under `0.1.0` can upgrade directly; a separate schema/data migration plan is required. Never delete an existing database to upgrade without preserving its data.
-- Published release: `0.1.0`. Check [PyPI](https://pypi.org/project/django-accounts-framework-fdg/) for the current version; `0.2.0` should only be described as published after its upload succeeds.
+- **Migration compatibility:** Version `0.2.1` retains a regenerated `accounts/migrations/0001_initial.py` instead of an incremental `0002` migration. It is intended for fresh databases. Do **not** assume an existing database migrated under `0.1.0` can upgrade directly; a separate schema/data migration plan is required. Never delete an existing database to upgrade without preserving its data.
+- Published release: [`0.2.1` on PyPI](https://pypi.org/project/django-accounts-framework-fdg/0.2.1/).
+
+## Contact
+
+**Email:** `huachenlihx@gmail.com` (plain text for copying)
+
+**Source code:** [GitHub repository](https://github.com/huachenlihx/django-accounts-framework-fdg)
 
 ## License
 
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for the full license text.
+This project is licensed under the **MIT License**. See the [LICENSE](https://github.com/huachenlihx/django-accounts-framework-fdg/blob/main/LICENSE) file for the full license text.
