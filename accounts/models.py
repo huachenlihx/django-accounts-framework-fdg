@@ -70,6 +70,8 @@ class User(AbstractUser):
         help_text='If True, employee is forced to change password on next login.'
     )
     activation_token = models.CharField(max_length=64, blank=True, default='')
+    # When the current activation token was issued; the link expires ACTIVATION_TOKEN_EXPIRY_HOURS later.
+    activation_token_created_at = models.DateTimeField(null=True, blank=True)
     is_activated = models.BooleanField(
         default=False,
         help_text='Set to True after the user clicks the activation link in their email.'
@@ -103,6 +105,15 @@ class User(AbstractUser):
     @classmethod
     def generate_activation_token(cls):
         return secrets.token_urlsafe(48)
+
+    @property
+    def activation_token_is_valid(self):
+        """True while the stored activation token is within its lifetime."""
+        if not self.activation_token or self.activation_token_created_at is None:
+            return False
+        from .conf import accounts_setting
+        hours = int(accounts_setting('ACTIVATION_TOKEN_EXPIRY_HOURS', 24))
+        return timezone.now() < self.activation_token_created_at + timedelta(hours=hours)
 
 
 class PasswordResetToken(models.Model):

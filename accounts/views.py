@@ -8,6 +8,9 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect
 from .identifiers import parse_public_id
 from .models import User, PasswordResetToken
+from .password_validation import password_errors
+from django.utils import timezone
+from django.db import transaction
 from .serializers import UserSerializer, UserCreateSerializer, RegisterSerializer, PreferredLocaleUpdateSerializer
 from .email_utils import send_activation_email, send_password_reset_email, send_welcome_email, accounts_setting, ACTIVATION_TOKEN_EXPIRY_HOURS
 from .services.permission_service import user_has_permission
@@ -115,7 +118,7 @@ def _get_manageable_user(user, user_public_id):
 # ── Auth views ────────────────────────────────────────────────────────────────
 
 class CsrfView(APIView):
-    """GET /api/auth/csrf/ — sets the csrftoken cookie."""
+    """GET auth/csrf/ — sets the csrftoken cookie."""
     permission_classes = [AllowAny]
 
     def get(self, request):
@@ -126,7 +129,7 @@ class CsrfView(APIView):
 
 @method_decorator(csrf_protect, name="dispatch")
 class LoginView(APIView):
-    """POST /api/auth/login/ — accepts { email, password }."""
+    """POST auth/login/ — accepts { email, password }."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -158,14 +161,14 @@ class LoginView(APIView):
 
 
 class LogoutView(APIView):
-    """POST /api/auth/logout/"""
+    """POST auth/logout/"""
     def post(self, request):
         logout(request)
         return Response({'status': 'logged out'})
 
 
 class MeView(APIView):
-    """GET/PATCH /api/auth/me/ — read the profile or update preferred locale."""
+    """GET/PATCH auth/me/ — read the profile or update preferred locale."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -187,7 +190,7 @@ class MeView(APIView):
 
 class RegisterView(APIView):
     """
-    POST /api/auth/register/
+    POST auth/register/
     Body: { email, password, confirm_password, first_name, last_name }
 
     Creates an active but unactivated account and sends an activation email.
@@ -217,6 +220,7 @@ class RegisterView(APIView):
             is_active=True,
             is_activated=not require_activation,
             activation_token=token,
+            activation_token_created_at=timezone.now() if require_activation else None,
         )
         if require_activation:
             try:
@@ -238,7 +242,7 @@ class RegisterView(APIView):
 
 class ActivateAccountView(APIView):
     """
-    GET /api/auth/activate/?token=<token>
+    GET auth/activate/?token=<token>
     Called when the user clicks the activation link in their email.
     Sets is_activated=True and clears the activation_token.
     """
@@ -257,8 +261,15 @@ class ActivateAccountView(APIView):
                 status=400
             )
 
+        if not user.activation_token_is_valid:
+            return Response(
+                {'error': 'This activation link has expired. Please request a new one.'},
+                status=400
+            )
+
         user.is_activated    = True
         user.activation_token = ''
+        user.activation_token_created_at = None
         user.save()
 
         if accounts_setting("SEND_WELCOME_EMAIL", False):
@@ -272,7 +283,7 @@ class ActivateAccountView(APIView):
 
 class ResendActivationView(APIView):
     """
-    POST /api/auth/activate/resend/
+    POST auth/activate/resend/
     Body: { email }
 
     Resends the activation email only for eligible accounts:
@@ -291,7 +302,8 @@ class ResendActivationView(APIView):
                 user = User.objects.get(email=email, is_active=True, is_activated=False)
                 token = User.generate_activation_token()
                 user.activation_token = token
-                user.save(update_fields=['activation_token'])
+                user.activation_token_created_at = timezone.now()
+                user.save(update_fields=['activation_token', 'activation_token_created_at'])
                 try:
                     send_activation_email(user, token)
                 except Exception:
@@ -308,7 +320,7 @@ class ResendActivationView(APIView):
 
 class PasswordResetRequestView(APIView):
     """
-    POST /api/auth/password-reset/request/
+    POST auth/password-reset/request/
     Body: { email }
     Always returns 200 — never reveals whether email exists (prevents enumeration).
     """
@@ -328,7 +340,7 @@ class PasswordResetRequestView(APIView):
 
 class PasswordResetConfirmView(APIView):
     """
-    POST /api/auth/password-reset/confirm/
+    POST auth/password-reset/confirm/
     Body: { token, new_password, confirm_password }
     """
     permission_classes = [AllowAny]
@@ -347,28 +359,37 @@ class PasswordResetConfirmView(APIView):
         if new_password != confirm_password:
             return Response({'error': 'Passwords do not match.'}, status=400)
 
-        try:
-            token_obj = PasswordResetToken.objects.select_related('user').get(token=token_str)
-        except PasswordResetToken.DoesNotExist:
-            return Response({'error': 'Invalid or expired reset link.'}, status=400)
+        # Lock the user first to serialize concurrent reset requests across
+        # tokens for the same user; then lock the token and check again inside
+        # the transaction. PostgreSQL/MySQL row locks enforce single use.
+        with transaction.atomic():
+            try:
+                token_owner_id = PasswordResetToken.objects.filter(token=token_str).values_list(
+                    'user_id', flat=True
+                ).get()
+            except PasswordResetToken.DoesNotExist:
+                return Response({'error': 'Invalid or expired reset link.'}, status=400)
 
-        if not token_obj.is_valid:
-            return Response({'error': 'This reset link has expired or already been used.'}, status=400)
+            user = User.objects.select_for_update().get(pk=token_owner_id)
+            token_obj = PasswordResetToken.objects.select_for_update().get(token=token_str)
+            if not token_obj.is_valid:
+                return Response({'error': 'This reset link has expired or already been used.'}, status=400)
 
-        user = token_obj.user
-        user.set_password(new_password)
-        user.must_change_password = False   # clear forced-change flag if set
-        user.save()
-
-        token_obj.used = True
-        token_obj.save()
+            problems = password_errors(new_password, user)
+            if problems:
+                return Response({'error': ' '.join(problems)}, status=400)
+            user.set_password(new_password)
+            user.must_change_password = False
+            user.save(update_fields=['password', 'must_change_password'])
+            token_obj.used = True
+            token_obj.save(update_fields=['used'])
 
         return Response({'detail': 'Password updated. You can now log in.'})
 
 
 class PasswordResetTokenCheckView(APIView):
     """
-    GET /api/auth/password-reset/check/?token=<token>
+    GET auth/password-reset/check/?token=<token>
     Front-end calls this on mount of /reset-password page to validate the token.
     """
     permission_classes = [AllowAny]
@@ -388,7 +409,7 @@ class PasswordResetTokenCheckView(APIView):
 
 class ChangePasswordView(APIView):
     """
-    POST /api/auth/change-password/
+    POST auth/change-password/
     Body: { current_password, new_password, confirm_password }
     """
     permission_classes = [IsAuthenticated]
@@ -413,6 +434,10 @@ class ChangePasswordView(APIView):
         if current_password == new_password:
             return Response({'error': 'New password must differ from the current password.'}, status=400)
 
+        problems = password_errors(new_password, request.user)
+        if problems:
+            return Response({'error': ' '.join(problems)}, status=400)
+
         request.user.set_password(new_password)
         request.user.must_change_password = False
         request.user.save()
@@ -429,9 +454,9 @@ class ChangePasswordView(APIView):
 
 class AdminSetPasswordView(APIView):
     """
-    POST /api/auth/admin-set-password/
+    POST auth/admin-set-password/
     Body: { user_public_id, new_password }
-    Manager, HR, Admin, or superuser only.
+    Requires accounts.manage_users (superusers always allowed).
     """
     permission_classes = [IsAuthenticated]
 
@@ -452,6 +477,10 @@ class AdminSetPasswordView(APIView):
         if target_user is None:
             return Response({'error': 'User not found.'}, status=404)
 
+        problems = password_errors(new_password, target_user)
+        if problems:
+            return Response({'error': ' '.join(problems)}, status=400)
+
         target_user.set_password(new_password)
         target_user.must_change_password = True   # force change on next login
         target_user.save()
@@ -466,7 +495,7 @@ class AdminSetPasswordView(APIView):
 
 class AssignRoleView(APIView):
     """
-    POST /api/auth/assign-role/
+    POST auth/assign-role/
     Backward compatible bodies:
       { user_public_id, role }                       -> replace all groups with one role
       { user_public_id, roles: [..], action: replace } -> replace all groups
@@ -490,7 +519,11 @@ class AssignRoleView(APIView):
             role_codes = [role] if role else []
         if isinstance(role_codes, str):
             role_codes = [role_codes]
-        role_codes = [str(code).strip() for code in role_codes if str(code).strip()]
+        if not isinstance(role_codes, (list, tuple)) or not all(
+            isinstance(code, str) for code in role_codes
+        ):
+            return Response({'error': 'roles must be a list of role names.'}, status=400)
+        role_codes = [code.strip() for code in role_codes if code.strip()]
 
         if not user_public_id or not role_codes:
             return Response({'error': 'user_public_id and role/roles are required.'}, status=400)
@@ -537,7 +570,7 @@ class AssignRoleView(APIView):
 
 
 class RoleListView(APIView):
-    """GET /api/auth/roles/ — list Django Groups used as roles for assignment UIs."""
+    """GET auth/roles/ — list Django Groups used as roles for assignment UIs."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -562,7 +595,7 @@ class RoleListView(APIView):
 
 class GroupsPermissionsAdminView(APIView):
     """
-    GET /api/auth/admin/groups-permissions/
+    GET auth/admin/groups-permissions/
 
     Superuser-only API for inspecting Django Groups and Permissions.
 
@@ -624,9 +657,9 @@ class GroupsPermissionsAdminView(APIView):
 
 class SetUserActiveView(APIView):
     """
-    POST /api/auth/set-active/
-    Body: { user_public_id, is_active }   (is_active: true | false)
-    Manager, HR, Administrator, superuser only.
+    POST auth/set-active/
+    Body: { user_public_id, is_active }   (is_active must be a JSON boolean: true | false)
+    Requires accounts.manage_users (superusers always allowed).
     When activating a previously-deactivated user, must_change_password is set to True.
     """
     permission_classes = [IsAuthenticated]
@@ -683,9 +716,8 @@ class EmployeeListView(APIView):
 class PermissionListView(APIView):
     """Return all Django permissions and the current user's permissions.
 
-    There is no custom permission registry in v28 RC1. Django creates
-    permissions from each app's model Meta.permissions and built-in model
-    permissions during migrations.
+    Permissions are Django's own: they are created from each app's model
+    Meta.permissions and the built-in model permissions during migrations.
     """
     permission_classes = [IsAuthenticated]
 

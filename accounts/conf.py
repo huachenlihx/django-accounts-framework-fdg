@@ -7,7 +7,7 @@ ACCOUNTS_FRAMEWORK (dict) keys - see README.md for the full description:
     SITE_NAME, FRONTEND_URL, SITE_URL, LOGO_URL, SUPPORT_EMAIL, BRAND_COLOR,
     ACTIVATION_PATH, PASSWORD_RESET_PATH, ACTIVATION_TOKEN_EXPIRY_HOURS,
     PASSWORD_RESET_EXPIRY_HOURS, SEND_WELCOME_EMAIL, ENABLE_SELF_REGISTRATION,
-    REQUIRE_EMAIL_ACTIVATION, ROLE_PRESETS, MANAGER_ASSIGNABLE_ROLES
+    REQUIRE_EMAIL_ACTIVATION, ROLE_PRESETS, MANAGER_ASSIGNABLE_ROLES, SUPPORTED_LOCALES
 
 Top-level settings read by the forced-password-change middleware:
     ACCOUNTS_FORCE_PASSWORD_PROTECTED_PREFIXES  (default ("/",): the whole site)
@@ -35,6 +35,8 @@ DEFAULT_ACCOUNTS_FRAMEWORK = {
     # superuser, may assign to others. Empty by default: only superusers can assign roles
     # until the project lists the low-privilege roles it is happy to delegate.
     "MANAGER_ASSIGNABLE_ROLES": (),
+    # Locale codes a user may store as preferred_locale (PATCH auth/me/). Max 20 characters each.
+    "SUPPORTED_LOCALES": ("en", "fr", "de", "zh-Hans-CN"),
 }
 
 

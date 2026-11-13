@@ -53,9 +53,14 @@ def get_role_presets() -> list[RolePreset]:
     }
     """
     config = getattr(settings, "ACCOUNTS_FRAMEWORK", {}) or {}
-    custom = config.get("ROLE_PRESETS")
-    if not custom:
+    if "ROLE_PRESETS" not in config:
         return list(DEFAULT_ROLE_PRESETS)
+    custom = config["ROLE_PRESETS"]
+    if custom is None:
+        return list(DEFAULT_ROLE_PRESETS)
+    # An explicit empty list disables built-in role presets.
+    if not isinstance(custom, (tuple, list)):
+        raise ValueError("ACCOUNTS_FRAMEWORK['ROLE_PRESETS'] must be a list/tuple.")
 
     presets: list[RolePreset] = []
     for item in custom:

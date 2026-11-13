@@ -1,5 +1,7 @@
 from rest_framework import serializers
+from .conf import DEFAULT_ACCOUNTS_FRAMEWORK, accounts_setting
 from .models import User
+from .password_validation import password_errors
 from .services.permission_service import get_user_permission_codes
 
 
@@ -23,11 +25,18 @@ class UserSerializer(serializers.ModelSerializer):
         # username is internal and auto-populated from email by UserManager.
 
 
-SUPPORTED_LOCALES = ('en', 'fr', 'de', 'zh-Hans-CN')
+SUPPORTED_LOCALES = DEFAULT_ACCOUNTS_FRAMEWORK["SUPPORTED_LOCALES"]  # default; see ACCOUNTS_FRAMEWORK
 
 
 class PreferredLocaleUpdateSerializer(serializers.Serializer):
-    preferred_locale = serializers.ChoiceField(choices=SUPPORTED_LOCALES)
+    """Accepts only the locales listed in ACCOUNTS_FRAMEWORK["SUPPORTED_LOCALES"]."""
+    preferred_locale = serializers.ChoiceField(choices=())
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['preferred_locale'].choices = [
+            str(code) for code in accounts_setting("SUPPORTED_LOCALES", SUPPORTED_LOCALES)
+        ]
 
 
 
@@ -38,6 +47,18 @@ class UserCreateSerializer(serializers.ModelSerializer):
     manager = serializers.SlugRelatedField(
         slug_field='public_id', queryset=User.objects.all(), required=False, allow_null=True,
     )
+
+    def validate(self, attrs):
+        # Attribute-aware validators need the account's email and names.
+        candidate = User(
+            email=attrs.get('email', ''),
+            first_name=attrs.get('first_name', ''),
+            last_name=attrs.get('last_name', ''),
+        )
+        problems = password_errors(attrs['password'], candidate)
+        if problems:
+            raise serializers.ValidationError({'password': problems})
+        return attrs
 
     class Meta:
         model  = User
@@ -81,4 +102,8 @@ class RegisterSerializer(serializers.Serializer):
     def validate(self, data):
         if data['password'] != data['confirm_password']:
             raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        candidate = User(email=data['email'], first_name=data.get('first_name', ''), last_name=data.get('last_name', ''))
+        problems = password_errors(data['password'], candidate)
+        if problems:
+            raise serializers.ValidationError({'password': problems})
         return data

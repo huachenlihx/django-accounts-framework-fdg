@@ -1,80 +1,188 @@
 # Accounts — Reusable Django Authentication and Role Framework
 
-A reusable Django app providing email-based user accounts, session authentication, account activation, password recovery, user-profile and administrative APIs, Django Group roles, and a Role Setup Wizard. This document describes the **version packaged with Appointment Booking**; copy or package the `accounts/` directory together with its migrations and templates when adopting it in a *new* Django project.
+A Django app that gives a project email-based user accounts and a session-authenticated JSON API for them: registration with email activation, login and logout, password reset, password change, a forced-password-change policy, role management with Django Groups, and a Role Setup Wizard in Django Admin.
 
-> **Reuse status:** The forced-password-change middleware no longer contains Appointment Booking-specific URL exemptions. This app is **reusable with configuration**, not a universal plug-and-play drop-in: it defines a custom user model and uses some opinionated API paths, email templates, and role-management behavior. Verify dependencies, URL mounting, and permissions for each host project.
+It is designed for projects with a separate frontend (a single-page app or mobile client) that talks to Django over `fetch`/XHR with session cookies, but nothing prevents you from using the models, permissions and admin without the API.
 
-## 1. Features and ownership boundaries
+## Contents
 
-- Email-based login, logout, registration, activation, password reset, and profile/session endpoints.
-- A custom `accounts.User` model with a unique, randomly assigned `public_id` UUID. Internal integer primary keys are not exposed as public user identifiers by the Accounts API.
-- A forced-password-change middleware policy. Its scope, its exemptions and the account endpoints it must still allow are all derived from Django settings and URL names, not hard-coded paths.
-- Django system checks (`manage.py check`) that report a mis-configured host project.
-- Django Groups for multiple roles per user; business apps define and enforce their own permissions using `user.has_perm("app_label.codename")`.
-- Django Admin views and Role Setup Wizard for permission presets.
-- Customizable account emails and frontend links via `ACCOUNTS_FRAMEWORK`.
+1. [Features](#1-features)
+2. [Requirements and compatibility](#2-requirements-and-compatibility)
+3. [Installation](#3-installation)
+4. [Setup in a new Django project](#4-setup-in-a-new-django-project)
+5. [Configuration reference](#5-configuration-reference)
+6. [Forced password change and `ACCOUNTS_FORCE_PASSWORD_ALLOWED_PREFIXES`](#6-forced-password-change-and-accounts_force_password_allowed_prefixes)
+7. [Roles and permissions](#7-roles-and-permissions)
+8. [Public identifiers (`public_id`)](#8-public-identifiers-public_id)
+9. [Using the API from a frontend](#9-using-the-api-from-a-frontend)
+10. [API reference](#10-api-reference)
+11. [Emails](#11-emails)
+12. [System checks](#12-system-checks)
+13. [Testing](#13-testing)
+14. [Limitations](#14-limitations)
 
-**Project-specific responsibilities belong outside Accounts:** appointments, calendar routes, business roles, staff schedules, and other domain APIs. `origin_management` is a separate optional app for CORS and is *not* required simply to use Accounts.
+---
 
-## 2. Prerequisites and integrating into a fresh Django project
+## 1. Features
 
-1. Install the dependencies your project's Accounts code actually imports (including Django, Django REST Framework, and any email/template utilities). The source version should be tested with your chosen Django and database versions; this README is not a claim of standalone packaging or published PyPI support.
-2. Copy `accounts/` including `migrations/`, `templates/`, `services/`, and any other files into the Django source tree.
-3. **Before the very first migration**, configure the custom user model and installed apps:
+- **Email-based accounts.** A custom `accounts.User` model that logs in with an email address, plus optional `first_name`, `last_name`, `department`, `employee_id`, `manager`, `preferred_locale`, `is_activated` and `must_change_password` fields.
+- **Self-service flows.** Registration (can be switched off), email activation with expiring links and resend, password reset by emailed link, and password change.
+- **Password rules.** Every place that sets a password applies Django's `AUTH_PASSWORD_VALIDATORS` in addition to an 8-character minimum.
+- **Roles are Django Groups.** A user can hold several roles. Your own apps check permissions with `user.has_perm("app_label.codename")`; this app only adds two permissions of its own (`accounts.manage_users`, `accounts.access_admin_tools`).
+- **Role Setup Wizard** in Django Admin that creates the Groups you describe in settings and assigns their permissions.
+- **Administrative API** for users with `accounts.manage_users`: list users, assign roles, set a temporary password, activate or deactivate accounts.
+- **Forced password change.** Middleware that blocks a user who holds a temporary password until they set a new one. Its scope and exemptions are settings.
+- **Opaque public identifiers.** Users are identified outside the backend by a random UUID (`public_id`), never by the database id.
+- **Configurable emails.** Activation, password-reset and welcome emails with overridable templates, branding and frontend links.
+- **System checks** (`manage.py check`) that report common configuration mistakes.
 
-   ```python
-   INSTALLED_APPS = [
-       "django.contrib.admin",
-       "django.contrib.auth",
-       "django.contrib.contenttypes",
-       "django.contrib.sessions",
-       "django.contrib.messages",
-       "django.contrib.staticfiles",
-       "rest_framework",
-       "accounts.apps.AccountsConfig",
-   ]
-   AUTH_USER_MODEL = "accounts.User"
-   ```
+## 2. Requirements and compatibility
 
-4. Mount the account URLs under `/api/`, because `accounts.urls` already defines paths beginning with `auth/` (and a `permissions/` route):
+| Component | Supported |
+| --- | --- |
+| Python | 3.10 or newer, as far as your Django version supports (tested on 3.10, 3.12 and 3.13) |
+| Django | 4.2, 5.2, 6.0 and 6.1 (all tested, each with the Python versions it supports) |
+| Django REST Framework | 3.15+ (tested with 3.16) |
+| Databases | Any database Django supports for a standard schema. SQLite, PostgreSQL and MariaDB are tested. |
 
-   ```python
-   from django.urls import include, path
+The app has no dependency on other third-party packages. It uses Django's own email, sessions, auth and admin.
 
-   urlpatterns = [
-       path("api/", include("accounts.urls")),
-       # Your own app routes go here.
-   ]
-   ```
+## 3. Installation
 
-   You may mount `accounts.urls` under any prefix (`api/`, `v2/members/`, or the site root). Every route has a stable name (`accounts-login`, `accounts-me`, ...), and the middleware finds its exempt endpoints by reversing those names, so nothing depends on the mount point. The paths *inside* `accounts.urls` (`auth/login/`, `auth/me/`, ...) are fixed; your frontend must use whatever mount point you chose.
+Install the package that provides the `accounts` Python package, for example:
 
-5. For forced password changes, install the middleware **after** Django's authentication middleware:
+```bash
+pip install <distribution-name>
+```
 
-   ```python
-   MIDDLEWARE = [
-       "django.contrib.sessions.middleware.SessionMiddleware",
-       "django.contrib.auth.middleware.AuthenticationMiddleware",
-       "accounts.force_password_middleware.ForcePasswordChangeMiddleware",
-       # Other middleware appropriate for your project.
-   ]
-   ```
+Replace `<distribution-name>` with the name the package is published under. If you vendor the source instead, copy the whole `accounts/` directory (including `migrations/`, `templates/` and `services/`) into your project so that `import accounts` works.
 
-   This is a minimal ordering illustration; retain the rest of your project's normal middleware (especially security and CSRF middleware).
+## 4. Setup in a new Django project
 
-6. Configure `ACCOUNTS_FRAMEWORK`, database, mail transport, hosts, HTTPS/cookies, and optional frontend/CORS origins for your deployment. Run migrations against a **fresh** database, then create a superuser:
+Do these steps **before the first `migrate`** of a new project. The user model cannot be swapped once a database has been created with a different one.
 
-   ```bash
-   python manage.py check
-   python manage.py migrate
-   python manage.py createsuperuser
-   ```
+### 4.1 Settings
 
-   Run the Role Setup Wizard in Django Admin when you want the configured role presets. Do not re-use a consolidated `0001_initial.py` migration to overwrite an established project with existing user records or migration history.
+```python
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "rest_framework",
+    "accounts.apps.AccountsConfig",
+    # your apps ...
+]
 
-## 3. Configure account branding and behavior
+AUTH_USER_MODEL = "accounts.User"
 
-In the new Django project's `settings.py`, define an app-neutral configuration such as:
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Must come AFTER AuthenticationMiddleware. Optional, but required to enforce
+    # the forced-password-change policy (see section 6).
+    "accounts.force_password_middleware.ForcePasswordChangeMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+```
+
+Keep the rest of your project's normal middleware; the list above only shows the required ordering.
+
+### 4.2 URLs
+
+Mount `accounts.urls` anywhere you like. The routes inside it start with `auth/` (and one `permissions/` route).
+
+```python
+from django.urls import include, path
+
+urlpatterns = [
+    path("api/", include("accounts.urls")),   # -> /api/auth/login/, /api/auth/me/, ...
+    # your routes ...
+]
+```
+
+The mount point is entirely your choice: `api/`, `v2/members/` or the site root all work. Every route has a stable name (for example `accounts-login`), so code inside your project should use `reverse("accounts-login")` instead of hard-coded paths. The forced-password-change middleware also finds its exempt endpoints by these names, so it needs no knowledge of the mount point.
+
+### 4.3 Email
+
+The app sends mail through Django's standard mail API. Configure your normal email settings (SMTP backend, `DEFAULT_FROM_EMAIL`, and so on). In development you can use the console backend. See [section 11](#11-emails).
+
+### 4.4 Accounts settings
+
+Add an `ACCOUNTS_FRAMEWORK` dictionary (all keys optional; see [section 5](#5-configuration-reference)):
+
+```python
+ACCOUNTS_FRAMEWORK = {
+    "SITE_NAME": "Example Application",
+    "FRONTEND_URL": "https://app.example.com",
+    "SUPPORT_EMAIL": "support@example.com",
+}
+```
+
+### 4.5 Database and first run
+
+```bash
+python manage.py check
+python manage.py migrate
+python manage.py createsuperuser
+python manage.py runserver
+```
+
+Then open Django Admin, find **Role setup wizard** under *Accounts*, and create the roles you defined in `ROLE_PRESETS` (see [section 7](#7-roles-and-permissions)).
+
+### 4.6 Password rules
+
+Registration, password change, password reset, administrator-set passwords and administrator-created users all run Django's password validators, so configure `AUTH_PASSWORD_VALIDATORS` in your settings (Django's standard four are recommended):
+
+```python
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+```
+
+A rejected password returns HTTP 400 with the validator messages (`{"password": [...]}` for registration, `{"error": "..."}` elsewhere). With no validators configured, only the 8-character minimum applies.
+
+### 4.7 Cookies, CSRF and CORS
+
+The API uses Django's session cookie and CSRF protection. If your frontend runs on a different origin than the API, configure the standard Django settings for it (`CSRF_TRUSTED_ORIGINS`, cookie `SameSite`/`Secure` settings, and a CORS solution of your choice). Accounts does not provide CORS handling.
+
+---
+
+## 5. Configuration reference
+
+### 5.1 `ACCOUNTS_FRAMEWORK`
+
+A dictionary in `settings.py`. Every key is optional.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `SITE_NAME` | `"Application"` | Name shown in emails. |
+| `FRONTEND_URL` | `"http://localhost:3000"` | Base URL of your frontend; used to build the links in emails. |
+| `SITE_URL` | `"http://localhost:8000"` | Base URL of the backend, available to email templates. |
+| `LOGO_URL` | `""` | Absolute URL of a logo shown in HTML emails (omitted when empty). |
+| `SUPPORT_EMAIL` | `""` | Used as the `Reply-To` address and shown in emails. Falls back to the sender address. |
+| `BRAND_COLOR` | `"#c41a5a"` | Accent colour (hex) in HTML emails. |
+| `ENABLE_SELF_REGISTRATION` | `True` | `False` makes `POST auth/register/` return 403, so accounts can only be created by administrators. |
+| `REQUIRE_EMAIL_ACTIVATION` | `True` | `True`: a registered user must follow the emailed link before logging in. `False`: they can log in immediately. |
+| `ACTIVATION_PATH` | `"/activate-account"` | Frontend path of the activation page. The email link is `FRONTEND_URL + ACTIVATION_PATH + "?token=..."`. |
+| `PASSWORD_RESET_PATH` | `"/reset-password"` | Frontend path of the reset page. The link is `FRONTEND_URL + PASSWORD_RESET_PATH + "?token=..."`. |
+| `ACTIVATION_TOKEN_EXPIRY_HOURS` | `24` | Lifetime of an activation link. An expired link is rejected (400) and the user can request a new one with `auth/activate/resend/`. The value is also shown in the email. |
+| `PASSWORD_RESET_EXPIRY_HOURS` | `2` | Lifetime of a password-reset link (single use). |
+| `SEND_WELCOME_EMAIL` | `False` | Send a welcome email after registration when activation is not required. |
+| `ROLE_PRESETS` | `Administrator`, `User Manager` | Roles the Role Setup Wizard can create. See [section 7](#7-roles-and-permissions). |
+| `MANAGER_ASSIGNABLE_ROLES` | `()` | Role (Group) names that a non-superuser holding `accounts.manage_users` may assign. Empty means only superusers can assign roles. |
+| `SUPPORTED_LOCALES` | `("en", "fr", "de", "zh-Hans-CN")` | Values accepted for `preferred_locale` by `PATCH auth/me/` (max 20 characters each). |
+
+Complete example:
 
 ```python
 ACCOUNTS_FRAMEWORK = {
@@ -91,166 +199,301 @@ ACCOUNTS_FRAMEWORK = {
     "ACTIVATION_TOKEN_EXPIRY_HOURS": 24,
     "PASSWORD_RESET_EXPIRY_HOURS": 2,
     "SEND_WELCOME_EMAIL": False,
-    "ROLE_PRESETS": [],  # Define project-specific role names/permissions here.
+    "ROLE_PRESETS": [],
+    "MANAGER_ASSIGNABLE_ROLES": [],
+    "SUPPORTED_LOCALES": ["en", "fr"],
 }
 ```
 
-Avoid copying Appointment Booking's or United Supermarket's URLs, logos, names, and business permissions into unrelated projects. Configure real SMTP credentials and sender information separately; do not commit secrets.
-
-### Email templates
-
-Edit HTML and text messages at:
-
-```text
-accounts/templates/accounts/emails/
-├── activation_email.html
-├── activation_email.txt
-├── password_reset_email.html
-├── password_reset_email.txt
-├── welcome_email.html
-└── welcome_email.txt
-```
-
-Test activation, reset, and welcome links against your own frontend route configuration.
-
-## 4. Forced password change (`must_change_password`)
-
-`ForcePasswordChangeMiddleware` returns `403 {"code": "password_change_required"}` to an **authenticated** user whose `must_change_password` is true, except for:
-
-1. the account endpoints needed to fix the situation: `accounts-me`, `accounts-logout`, `accounts-change-password`, `accounts-csrf` and the three `accounts-password-reset-*` routes. They are found with `reverse()`, wherever `accounts.urls` is mounted;
-2. `STATIC_URL` (static assets);
-3. any prefix you list in `ACCOUNTS_FORCE_PASSWORD_ALLOWED_PREFIXES`.
-
-Settings (top-level, in the host project's `settings.py`):
+### 5.2 Top-level settings
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `ACCOUNTS_FORCE_PASSWORD_PROTECTED_PREFIXES` | `("/",)` | Only paths starting with one of these prefixes are blocked. The default protects the **whole site** (fails closed); an API-only project can narrow it, for example `("/api/",)`. |
-| `ACCOUNTS_FORCE_PASSWORD_ALLOWED_PREFIXES` | `()` | Extra exemptions, for example token-protected downloads. Each prefix exempts **every URL beginning with it**, so keep it narrow and end it with `/`. |
+| `ACCOUNTS_FORCE_PASSWORD_PROTECTED_PREFIXES` | `("/",)` | URL prefixes the forced-password-change middleware protects. |
+| `ACCOUNTS_FORCE_PASSWORD_ALLOWED_PREFIXES` | `()` | URL prefixes exempted from that protection. |
 
-### 4.1 Understanding protected and allowed URL prefixes
+Both are explained in the next section.
 
-These settings apply when an **authenticated user has `must_change_password=True`**. They control which requests the forced-password-change middleware blocks **until the user changes their password**; they do **not** decide whether the user's password-change requirement exists.
+---
 
-- **`ACCOUNTS_FORCE_PASSWORD_PROTECTED_PREFIXES` — URLs to protect.** Requests whose paths begin with these prefixes are blocked until the user changes their password, unless an exception applies.
-- **`ACCOUNTS_FORCE_PASSWORD_ALLOWED_PREFIXES` — exceptions to the protection.** These URLs are allowed through *this middleware* even when they fall under a protected prefix. The user still has `must_change_password=True` and must eventually change their password.
+## 6. Forced password change and `ACCOUNTS_FORCE_PASSWORD_ALLOWED_PREFIXES`
 
-**Example: Appointment Booking** (illustrative host-project configuration, not a default of the reusable Accounts app). Add this in the host project's `settings.py`:
+### 6.1 What it does
+
+Every user has a `must_change_password` flag. It is set to `True` when an administrator assigns a temporary password (`auth/admin-set-password/`) or re-activates a deactivated account (`auth/set-active/`).
+
+While the flag is `True`, `ForcePasswordChangeMiddleware` answers requests from that authenticated user with:
+
+```http
+HTTP/1.1 403 Forbidden
+{"error": "You must change your temporary password.", "code": "password_change_required"}
+```
+
+The user is released as soon as they change their password with `auth/change-password/`, which clears the flag. Anonymous users and users whose flag is `False` are never affected.
+
+The middleware always lets through, wherever you mounted `accounts.urls`:
+
+- the account endpoints the user needs to fix the situation: `accounts-me`, `accounts-logout`, `accounts-change-password`, `accounts-csrf`, and the three `accounts-password-reset-*` routes;
+- `STATIC_URL`;
+- anything you list in `ACCOUNTS_FORCE_PASSWORD_ALLOWED_PREFIXES`.
+
+### 6.2 The two settings
+
+Both are top-level settings and must be a tuple or list of strings that start with `/`.
+
+**`ACCOUNTS_FORCE_PASSWORD_PROTECTED_PREFIXES` — what is protected.** Only request paths beginning with one of these prefixes can be blocked. The default `("/",)` protects the whole site (secure by default), including Django Admin pages. Narrow it if only part of your site should be affected:
 
 ```python
-ACCOUNTS_FORCE_PASSWORD_PROTECTED_PREFIXES = (
-    "/api/",
-)
+# An API-only backend: only /api/ is blocked while a temporary password is active.
+ACCOUNTS_FORCE_PASSWORD_PROTECTED_PREFIXES = ("/api/",)
+```
 
+**`ACCOUNTS_FORCE_PASSWORD_ALLOWED_PREFIXES` — exceptions to the protection.** Paths beginning with one of these prefixes are not blocked by this middleware even if they fall under a protected prefix. The default `()` means no extra exceptions.
+
+```python
 ACCOUNTS_FORCE_PASSWORD_ALLOWED_PREFIXES = (
-    "/api/appointments/calendar/",
+    "/api/public/downloads/",
+    "/api/health/",
 )
 ```
 
-With these settings, an authenticated user whose `must_change_password` is `True` experiences the following:
+### 6.3 How to decide what to list
 
-| URL | Access while `must_change_password=True` | Why |
-| --- | --- | --- |
-| `/api/appointments/book/` | **Blocked (HTTP 403)** | Under `/api/`, with no exception |
-| `/api/appointments/mine/` | **Blocked (HTTP 403)** | Under `/api/`, with no exception |
-| `/api/appointments/calendar/abc.ics` | **Allowed through** | Matches the explicitly allowed calendar prefix |
-| `/api/auth/change-password/` | **Allowed through** | Built-in Accounts exception, so the user can change their password |
+1. Start with no exceptions (`()`), and set the protected prefixes to match your URL layout.
+2. Test a user with `must_change_password=True` against the pages and endpoints your frontend needs *during* the forced change. The account endpoints in 6.1 are already allowed, so a typical single-page app needs nothing more.
+3. Add an exception only for a narrowly defined route that genuinely must work for such a user, for example a token-protected file download opened from an email, or a health check.
+4. End each prefix with `/` so it cannot match unrelated paths.
 
-**Important:** “Allowed through” means only that this particular middleware does not block the request. Normal authentication, token validation, authorization and view-level rules still apply. An allowed prefix **does not** set `must_change_password=False` or waive the requirement. Once the password is changed successfully and the flag becomes `False`, these forced-password restrictions no longer apply.
+### 6.4 Worked example
 
-For a **new Django project**, choose the protected prefixes to match that project's URL layout (or omit the setting to use the default `("/",)` for whole-site protection). Use allowed prefixes only for narrowly defined routes that genuinely need an exception. If no project-specific exception is needed, omit `ACCOUNTS_FORCE_PASSWORD_ALLOWED_PREFIXES` or leave it as `()`. For example, a project could protect `("/api/", "/dashboard/")` and exempt one specific `/api/public/download/` subtree when appropriate.
-
-**Security:** Prefix matching applies to *all* URLs beginning with the configured string. Avoid broad exemptions such as `"/api/"` unless you intend to bypass enforcement for every API endpoint.
-
-Both settings must be tuples/lists of paths starting with `/`; a plain string is rejected (`TypeError` at request time and a system-check error). With the default scope, a user with a temporary password cannot open Django Admin pages either (they receive the JSON 403) until the password is changed. These exemptions only bypass this middleware; views must still perform authentication, token checks and authorization.
-
-Install the middleware **after** `AuthenticationMiddleware`; `manage.py check` verifies this (see section 7).
-
-## 5. Public identifiers and access control
-
-`accounts.User.public_id` is a unique UUID used by public-facing account APIs. The public user serializer returns `public_id`, not the internal database `id`. The management endpoints below accept `user_public_id` in their request payloads.
-
-```text
-/api/auth/set-active/
-/api/auth/assign-role/
-/api/auth/admin-set-password/
+```python
+ACCOUNTS_FORCE_PASSWORD_PROTECTED_PREFIXES = ("/api/",)
+ACCOUNTS_FORCE_PASSWORD_ALLOWED_PREFIXES = ("/api/public/downloads/",)
 ```
 
-`UserCreateSerializer` accepts a manager `public_id`. Use `accounts.identifiers.parse_public_id()` to validate supplied IDs. Malformed, unknown, and unauthorized identifiers should produce appropriate validation errors or 404s, never reveal another user's data. UUIDs reduce identifier enumeration but **do not replace permissions or ownership checks**.
+For an authenticated user with `must_change_password=True` (accounts mounted at `/api/`):
 
-Roles are Django Groups; permission strings use `app_label.codename`. Users can belong to multiple Groups. The account-owned permissions include `accounts.manage_users` and `accounts.access_admin_tools`. Business feature apps define their own permissions.
+| Request path | Result | Reason |
+| --- | --- | --- |
+| `/api/orders/` | 403 | Under `/api/`, no exception. |
+| `/api/public/downloads/report.pdf` | passes the middleware | Matches an allowed prefix. |
+| `/api/public/downloads-private/` | 403 | The prefix ends with `/`, so `downloads-private/` does not match. |
+| `/api/auth/change-password/` | passes | Built-in account exemption. |
+| `/api/auth/me/` | passes | Built-in account exemption. |
+| `/dashboard/` | passes | Outside the protected prefix `/api/`. |
 
-**Who may assign which roles.** A user holding `accounts.manage_users` who is not a superuser may assign only the roles named in `ACCOUNTS_FRAMEWORK["MANAGER_ASSIGNABLE_ROLES"]`. The default is empty, so out of the box only superusers can assign roles. List only low-privilege roles; other groups may carry administrative permissions. Assigning the `Administrator` group is always superuser-only.
+### 6.5 Important notes
+
+- **"Passes the middleware" is not "public".** An allowed prefix only stops *this middleware* from returning 403. Authentication, permissions, token checks and ownership rules in your views still apply, and the user still has `must_change_password=True` until they change their password.
+- **Matching is by prefix.** Every URL beginning with the string is exempted, so `"/api/"` as an allowed prefix would disable enforcement for the whole API. Keep exceptions narrow.
+- **Validation.** A plain string (instead of a tuple or list), or a prefix that does not start with `/`, is reported by `manage.py check` (`accounts.E002`) and raises `TypeError` at request time.
+- **Default scope and Django Admin.** With the default protected prefix `("/",)`, a user holding a temporary password also receives the JSON 403 on admin pages until they change it.
+- **Install the middleware** after `AuthenticationMiddleware`. Without it, `must_change_password` is stored but not enforced (`accounts.W001`).
+
+---
+
+## 7. Roles and permissions
+
+Roles are Django Groups; a user may belong to several. Permissions are Django's standard `app_label.codename` permissions, checked in your own code with `user.has_perm("app_label.codename")`.
+
+### 7.1 Permissions defined by this app
+
+| Permission | Grants |
+| --- | --- |
+| `accounts.manage_users` | Use the administrative user API (list users, assign roles, set passwords, activate/deactivate) and manage users in Django Admin. |
+| `accounts.access_admin_tools` | Access the Accounts admin tools. |
+
+Superusers always have every permission. A non-superuser with `manage_users` never sees or manages superuser accounts, and an unknown id and a hidden superuser's id produce the same 404.
+
+### 7.2 Role presets and the Role Setup Wizard
+
+`ROLE_PRESETS` lists the roles the wizard can create. Each item has a `name`, a `description` and a list of `permissions`. Use `"__all__"` for every permission.
 
 ```python
 ACCOUNTS_FRAMEWORK = {
-    "MANAGER_ASSIGNABLE_ROLES": ["Customer", "Appointment Staff"],  # Appointment Booking
+    "ROLE_PRESETS": [
+        {"name": "Administrator", "description": "Everything.", "permissions": ["__all__"]},
+        {
+            "name": "Support Agent",
+            "description": "Can manage user accounts.",
+            "permissions": ["accounts.manage_users", "accounts.access_admin_tools"],
+        },
+        {"name": "Customer", "description": "No special permissions.", "permissions": []},
+    ],
 }
 ```
 
-**Role presets.** The Role Setup Wizard offers `ROLE_PRESETS` from `ACCOUNTS_FRAMEWORK`. The built-in default contains only project-independent presets: `Administrator` (all permissions) and `User Manager` (`accounts.manage_users`, `accounts.access_admin_tools`). Define your own presets for business roles.
+If `ROLE_PRESETS` is **missing** (or `None`), the built-in defaults are used: `Administrator` (all permissions) and `User Manager` (`accounts.manage_users`, `accounts.access_admin_tools`). In Django Admin, open *Accounts → Role setup wizard*, choose the presets and apply. Set `"ROLE_PRESETS": []` to intentionally offer no presets. Permissions that do not exist yet (for example from an app that is not installed) are reported instead of silently ignored.
 
-## 6. API routes
+### 7.3 Who may assign which roles
 
-Because `accounts.urls` is mounted under `/api/`, relevant endpoints include:
+- A superuser may assign any role.
+- A user with `accounts.manage_users` who is **not** a superuser may assign only the roles listed in `ACCOUNTS_FRAMEWORK["MANAGER_ASSIGNABLE_ROLES"]`. The default is empty, so by default only superusers can assign roles. The same allowlist applies to the Django Admin user form; delegated managers cannot edit staff accounts, superusers, or accounts with roles outside this allowlist or direct user permissions.
+- List only low-privilege roles. A group can carry administrative permissions, so delegating it delegates those powers. Assigning a group named `Administrator` is always superuser-only.
 
-```text
-/api/auth/csrf/                      accounts-csrf
-/api/auth/login/                     accounts-login
-/api/auth/logout/                    accounts-logout
-/api/auth/me/                        accounts-me
-/api/auth/register/                  accounts-register
-/api/auth/activate/                  accounts-activate
-/api/auth/activate/resend/           accounts-activate-resend
-/api/auth/change-password/           accounts-change-password
-/api/auth/password-reset/request/    accounts-password-reset-request
-/api/auth/password-reset/check/      accounts-password-reset-check
-/api/auth/password-reset/confirm/    accounts-password-reset-confirm
-/api/auth/roles/                     accounts-roles
-/api/auth/assign-role/               accounts-assign-role
-/api/auth/admin-set-password/        accounts-admin-set-password
-/api/auth/set-active/                accounts-set-active
-/api/auth/employees/                 accounts-employees
-/api/auth/admin/groups-permissions/  accounts-groups-permissions
-/api/permissions/                    account-permissions
+```python
+ACCOUNTS_FRAMEWORK = {
+    "MANAGER_ASSIGNABLE_ROLES": ["Customer", "Support Agent"],
+}
 ```
 
-The `/api/` prefix is only where Appointment Booking mounts `accounts.urls`; use `reverse("accounts-login")` etc. instead of hard-coding paths.
+### 7.4 Using roles in your own code
 
-See `accounts/urls.py`, serializers and views for HTTP methods, request fields and permission checks. Don't assume any route is public just because it has an API URL.
+```python
+from rest_framework.permissions import BasePermission
 
-## 7. Tests and deployment checklist
+class CanRunReports(BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.has_perm("reports.run_report")
+```
 
-Run from the containing Django project root:
+The permissions and role names of the signed-in user are included in the `auth/me/` and `auth/login/` responses (`permissions`, `roles`) so a frontend can show or hide features. The server must still enforce every permission itself.
+
+---
+
+## 8. Public identifiers (`public_id`)
+
+`accounts.User.public_id` is a unique, random UUID (version 4) that is generated automatically and never changes.
+
+- API responses contain `public_id` and **not** the integer primary key.
+- The management endpoints (`set-active`, `assign-role`, `admin-set-password`) take the target in `user_public_id`.
+- `UserCreateSerializer` takes a manager as that manager's `public_id`.
+- Use the helper to validate an id that comes from a client before filtering by it:
+
+```python
+from accounts.identifiers import parse_public_id
+
+public_id = parse_public_id(request.query_params.get("user"))   # UUID or None
+if public_id is None:
+    raise Http404
+user = get_object_or_404(User, public_id=public_id)
+```
+
+Filtering a UUID field with malformed text raises an error, so always pass client input through `parse_public_id()` first.
+
+A random identifier makes ids hard to guess or count, but it **does not replace** permission and ownership checks; keep those in every view.
+
+If you build your own models that reference users in API payloads, follow the same convention: expose `user.public_id`, accept it in requests, and keep the integer id internal.
+
+---
+
+## 9. Using the API from a frontend
+
+All paths below are relative to the mount point you chose (this guide writes them as `auth/...`; with `path("api/", include("accounts.urls"))` they become `/api/auth/...`).
+
+1. **Fetch a CSRF token** once on startup: `GET auth/csrf/` returns `{"csrfToken": "..."}` and sets the `csrftoken` cookie.
+2. **Send credentials and the token** on every state-changing request: use `credentials: "include"` (or `withCredentials: true`) and the `X-CSRFToken` header.
+3. **Log in** with `POST auth/login/`. The response is the user (including `must_change_password`). Django sets the session cookie.
+4. **Restore a session** on page load with `GET auth/me/`. A 401/403 means nobody is signed in.
+5. **React to `password_change_required`.** If any response has status 403 and `code: "password_change_required"`, send the user to your change-password screen.
+6. **Log out** with `POST auth/logout/`.
+
+Your frontend must implement the pages the emails link to: `ACTIVATION_PATH` (call `GET auth/activate/?token=...` on load) and `PASSWORD_RESET_PATH` (call `GET auth/password-reset/check/?token=...` on load, then `POST auth/password-reset/confirm/`).
+
+```js
+await fetch("/api/auth/login/", {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+  body: JSON.stringify({ email, password }),
+});
+```
+
+---
+
+## 10. API reference
+
+Authentication column: **public** = no login needed; **login** = any signed-in user; **manage** = signed in with `accounts.manage_users`; **superuser** = superusers only. Request and response bodies are JSON.
+
+| Name | Method and path | Auth | Request body / query | Notes |
+| --- | --- | --- | --- | --- |
+| `accounts-csrf` | `GET auth/csrf/` | public | — | Returns `{csrfToken}` and sets the cookie. |
+| `accounts-login` | `POST auth/login/` | public | `email`, `password` | 200 user; 401 bad credentials; 403 not activated or disabled. |
+| `accounts-logout` | `POST auth/logout/` | login | — | Ends the session. |
+| `accounts-me` | `GET auth/me/` | login | — | Current user, `permissions`, `roles`, `must_change_password`. |
+| `accounts-me` | `PATCH auth/me/` | login | `preferred_locale` | Must be one of `SUPPORTED_LOCALES`. |
+| `accounts-register` | `POST auth/register/` | public | `email`, `password`, `confirm_password`, `first_name`, `last_name` | 201; 400 for an invalid or weak password; 403 when self-registration is disabled. New users get no roles. |
+| `accounts-activate` | `GET auth/activate/?token=` | public | `token` | Activates the account. 400 for an invalid, used or expired link. |
+| `accounts-activate-resend` | `POST auth/activate/resend/` | public | `email` | Issues a new link with a fresh lifetime (the old one stops working). Always answers 200 (no account enumeration). |
+| `accounts-password-reset-request` | `POST auth/password-reset/request/` | public | `email` | Always answers 200. |
+| `accounts-password-reset-check` | `GET auth/password-reset/check/?token=` | public | `token` | Validates a reset link. |
+| `accounts-password-reset-confirm` | `POST auth/password-reset/confirm/` | public | `token`, `new_password`, `confirm_password` | Sets the new password; a rejected password leaves the link usable. |
+| `accounts-change-password` | `POST auth/change-password/` | login | `current_password`, `new_password`, `confirm_password` | Clears `must_change_password`. |
+| `accounts-employees` | `GET auth/employees/` | manage | — | Users the caller may manage (superusers are hidden from non-superusers). |
+| `accounts-roles` | `GET auth/roles/` | manage | — | Groups available as roles. |
+| `accounts-assign-role` | `POST auth/assign-role/` | manage | `user_public_id`, and `role` or `roles` (+ `action`: `replace`, `add`, `remove`) | Subject to [section 7.3](#73-who-may-assign-which-roles). |
+| `accounts-admin-set-password` | `POST auth/admin-set-password/` | manage | `user_public_id`, `new_password` | Sets a temporary password and `must_change_password=True`. |
+| `accounts-set-active` | `POST auth/set-active/` | manage | `user_public_id`, `is_active` (**JSON boolean**) | Strings and numbers are rejected with 400. Re-activating forces a password change. Cannot be used on your own account. |
+| `accounts-groups-permissions` | `GET auth/admin/groups-permissions/` | superuser | optional `?group=<name>` or `?permission=<app_label.codename>` | Groups and permissions are identified by name and code only. |
+| `account-permissions` | `GET permissions/` | login | — | All permissions and the caller's own. |
+
+Error responses use `{"error": "message"}` with an appropriate HTTP status. Do not assume any route is public because it is reachable; the table above is the contract.
+
+---
+
+## 11. Emails
+
+Three emails are sent, each as multipart plain text plus HTML:
+
+| Email | When | Link |
+| --- | --- | --- |
+| Activation | After registration when `REQUIRE_EMAIL_ACTIVATION` is `True`, and on resend | `FRONTEND_URL + ACTIVATION_PATH + "?token=..."` (valid for `ACTIVATION_TOKEN_EXPIRY_HOURS`) |
+| Password reset | After `auth/password-reset/request/` for an eligible account | `FRONTEND_URL + PASSWORD_RESET_PATH + "?token=..."` (valid for `PASSWORD_RESET_EXPIRY_HOURS`) |
+| Welcome | After registration when activation is not required and `SEND_WELCOME_EMAIL` is `True` | — |
+
+The sender is `DEFAULT_FROM_EMAIL` (falling back to `EMAIL_HOST_USER`); `Reply-To` is `SUPPORT_EMAIL` when set.
+
+To change the wording or design, override the templates by creating files with the same names in a template directory of your project that comes **before** the app in the template search order:
+
+```text
+accounts/emails/activation_email.html     accounts/emails/activation_email.txt
+accounts/emails/password_reset_email.html accounts/emails/password_reset_email.txt
+accounts/emails/welcome_email.html        accounts/emails/welcome_email.txt
+```
+
+For example, with `TEMPLATES[0]["DIRS"] = [BASE_DIR / "templates"]`, put your files in `templates/accounts/emails/`. Test every link against your own frontend routes.
+
+---
+
+## 12. System checks
+
+`python manage.py check` reports these problems:
+
+| ID | Severity | Meaning |
+| --- | --- | --- |
+| `accounts.E001` | Error | `AUTH_USER_MODEL` is not `"accounts.User"`. |
+| `accounts.E002` | Error | A forced-password prefix setting is not a tuple/list of paths starting with `/`. |
+| `accounts.E003` | Error | `ACCOUNTS_FRAMEWORK["MANAGER_ASSIGNABLE_ROLES"]` is not a list of strings. |
+| `accounts.E004` | Error | `ForcePasswordChangeMiddleware` is listed before `AuthenticationMiddleware`. |
+| `accounts.E005` | Error | `ACCOUNTS_FRAMEWORK["SUPPORTED_LOCALES"]` is empty or not a list of short strings. |
+| `accounts.E006` | Error | `ACCOUNTS_FRAMEWORK["ROLE_PRESETS"]` must be a list of role dictionaries with names and permission lists. |
+| `accounts.W001` | Warning | `ForcePasswordChangeMiddleware` is not installed, so `must_change_password` is not enforced. |
+
+Run `python manage.py check --deploy` before production as well; it covers Django's own HTTPS and cookie recommendations.
+
+---
+
+## 13. Testing
+
+In your project:
 
 ```bash
 python manage.py check
-python manage.py makemigrations --check --dry-run
+python manage.py makemigrations --check --dry-run   # should report "No changes detected"
 python manage.py test accounts
 ```
 
-In the Appointment Booking host project, also run its existing middleware/integration tests:
+The tests shipped with the app do not depend on your URL layout: they mount `accounts.urls` through their own test URL configurations (under `/api/`, under an unusual prefix and at the site root).
 
-```bash
-python manage.py test accounts.tests appointments.tests.test_password_change_middleware
-```
+Also verify, in your own project and against your real database engine and frontend origin: registration and activation (including an expired link), login/logout, password reset, a forced password change (create a user, set a temporary password, confirm other endpoints return 403 and `auth/change-password/` works), role setup, CSRF behaviour and the email content and links.
 
-`manage.py check` reports configuration problems: `accounts.E001` (`AUTH_USER_MODEL` is not `accounts.User`), `E002` (bad prefix settings), `E003` (bad `MANAGER_ASSIGNABLE_ROLES`), `E004` (middleware placed before `AuthenticationMiddleware`) and `W001` (forced-password middleware not installed, so `must_change_password` is not enforced).
+---
 
-The `accounts` tests are self-contained: they mount `accounts.urls` through their own test URL configurations (`accounts/tests/urls_*.py`), under `/api/`, under an unusual prefix and at the site root.
+## 14. Limitations
 
-Verify session login/logout, registration/activation, reset, forced password change, role setup, public UUIDs, CSRF, and email content in the new project. Test against its actual database engine and frontend origin.
-
-**Operational boundaries:** Django must apply initial Accounts migrations before creating users. Switching an existing project from another user model may require a careful migration and cannot be treated as copying source files. If using a separate frontend origin, configure CORS, CSRF, cookies and credentials correctly; the optional `origin_management` app can help manage CORS but is not an authentication substitute.
-
-## 8. Reuse maturity and remaining limits
-
-Configurable through settings, with project-independent defaults: the mount point of `accounts.urls`, the forced-password scope and exemptions, which roles managers may assign, role presets, branding and email links, activation/reset behavior, and registration.
-
-Still fixed by design:
-
-- **The user model.** The app ships a concrete `accounts.User` and requires `AUTH_USER_MODEL = "accounts.User"` before the first migration (checked by `accounts.E001`). A host that needs its own user model cannot use the app as-is; the next step would be an abstract base user class plus `get_user_model()` throughout the views, serializers and admin.
-- **Route layout.** Paths inside `accounts.urls` (`auth/...`) and the JSON request/response shapes are part of the app's contract.
-- **Packaging.** The app is copied into each project; it is not a published, versioned package and is tested here only through Appointment Booking plus its own `accounts/tests`.
-
-If you maintain it across several products, extract it into a private versioned Python package after an independent integration test with a minimal Django project, and write release notes whenever you change public serializers, routes, settings keys or the user model.
+- **The user model is fixed.** The app ships a concrete `accounts.User` and requires `AUTH_USER_MODEL = "accounts.User"` from the very first migration. It cannot be added to a project that already has data under a different user model without a hand-written migration.
+- **The route layout is part of the contract.** You choose where `accounts.urls` is mounted, but the paths inside it (`auth/login/`, `auth/me/`, ...) and the JSON shapes are fixed.
+- **Groups and permissions have no public identifiers.** They are Django's own models and are identified by name and `app_label.codename`.
+- **No CORS handling and no frontend.** Cross-origin setups need your own CORS configuration, and the activation/reset pages must be implemented in your frontend.
+- **Password rules.** The app enforces a fixed 8-character minimum plus whatever `AUTH_PASSWORD_VALIDATORS` you configure; it has no setting for other policies such as password history or expiry.
+- **No built-in rate limiting.** Login, registration and reset endpoints are not throttled by this app; add rate limiting at your proxy or with DRF throttling if the API is public.

@@ -1,12 +1,14 @@
 """Strict JSON boolean validation for privileged account activation changes."""
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from django.urls import reverse
 from rest_framework.test import APIClient
 
 
 User = get_user_model()
 
 
+@override_settings(ROOT_URLCONF="accounts.tests.urls_api")  # independent of the host project's URLs
 class SetUserActiveBooleanTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -17,7 +19,7 @@ class SetUserActiveBooleanTests(TestCase):
             email="target-activation@example.com", password="test-password-123"
         )
         self.client.force_authenticate(user=self.admin)
-        self.url = "/api/auth/set-active/"
+        self.url = reverse("accounts-set-active")
 
     def send(self, value):
         return self.client.post(

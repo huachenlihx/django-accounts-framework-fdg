@@ -54,3 +54,23 @@ class ProjectIndependentDefaultsTests(SimpleTestCase):
     @override_settings(ACCOUNTS_FRAMEWORK={})
     def test_managers_may_assign_no_roles_by_default(self):
         self.assertEqual(tuple(accounts_setting("MANAGER_ASSIGNABLE_ROLES", ("x",))), ())
+
+
+class SupportedLocalesTests(SimpleTestCase):
+    def valid(self, value):
+        from accounts.serializers import PreferredLocaleUpdateSerializer
+        return PreferredLocaleUpdateSerializer(data={"preferred_locale": value}).is_valid()
+
+    @override_settings(ACCOUNTS_FRAMEWORK={})
+    def test_default_locales(self):
+        self.assertTrue(self.valid("fr"))
+        self.assertFalse(self.valid("es"))
+
+    @override_settings(ACCOUNTS_FRAMEWORK={"SUPPORTED_LOCALES": ["en", "es"]})
+    def test_locales_are_configurable(self):
+        self.assertTrue(self.valid("es"))
+        self.assertFalse(self.valid("fr"))
+
+    @override_settings(MIDDLEWARE=[AUTH, FORCE], ACCOUNTS_FRAMEWORK={"SUPPORTED_LOCALES": []})
+    def test_empty_locale_list_is_a_check_error(self):
+        self.assertIn("accounts.E005", ids())
