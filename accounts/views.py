@@ -1,4 +1,7 @@
+import math
+
 from django.conf import settings as django_settings
+from rest_framework.exceptions import Throttled
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -14,6 +17,7 @@ from django.db import transaction
 from .serializers import UserSerializer, UserCreateSerializer, RegisterSerializer, PreferredLocaleUpdateSerializer
 from .email_utils import send_activation_email, send_password_reset_email, send_welcome_email, accounts_setting, ACTIVATION_TOKEN_EXPIRY_HOURS
 from .services.permission_service import user_has_permission
+from .throttles import ResendActivationEmailThrottle, ResendActivationIPThrottle
 
 
 PERMISSION_USER_MANAGE = "accounts.manage_users"
@@ -133,7 +137,8 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        email    = request.data.get('email', '').strip().lower()
+        raw_email = request.data.get('email', '')
+        email = raw_email.strip().lower() if isinstance(raw_email, str) else ''
         password = request.data.get('password', '')
 
         if not email or not password:
@@ -146,7 +151,8 @@ class LoginView(APIView):
 
         if not user.is_activated:
             return Response(
-                {'error': 'Please activate your account via the link sent to your email.'},
+                {'error': 'Please activate your account via the link sent to your email.',
+                 'code': 'account_not_activated'},
                 status=403
             )
 
@@ -263,7 +269,8 @@ class ActivateAccountView(APIView):
 
         if not user.activation_token_is_valid:
             return Response(
-                {'error': 'This activation link has expired. Please request a new one.'},
+                {'error': 'This activation link has expired. Please request a new one.',
+                 'code': 'activation_link_expired'},
                 status=400
             )
 
@@ -292,11 +299,23 @@ class ResendActivationView(APIView):
     - is_activated=False.
 
     Always returns the same 200 response to prevent email enumeration.
+
+    Rate limited per client IP and per email address (see accounts/throttles.py).
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ResendActivationIPThrottle, ResendActivationEmailThrottle]
+
+    def throttled(self, request, wait):
+        # Friendly, uniform message. Passing wait= to Throttled would append DRF's English
+        # "Expected available in N seconds." text, so set it afterwards: DRF still uses
+        # exc.wait for the Retry-After response header.
+        exc = Throttled(detail='Too many activation email requests. Please try again later.')
+        exc.wait = math.ceil(wait) if wait is not None else None
+        raise exc
 
     def post(self, request):
-        email = request.data.get('email', '').strip().lower()
+        raw_email = request.data.get('email', '')
+        email = raw_email.strip().lower() if isinstance(raw_email, str) else ''
         if email:
             try:
                 user = User.objects.get(email=email, is_active=True, is_activated=False)

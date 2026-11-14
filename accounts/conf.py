@@ -7,7 +7,7 @@ ACCOUNTS_FRAMEWORK (dict) keys - see README.md for the full description:
     SITE_NAME, FRONTEND_URL, SITE_URL, LOGO_URL, SUPPORT_EMAIL, BRAND_COLOR,
     ACTIVATION_PATH, PASSWORD_RESET_PATH, ACTIVATION_TOKEN_EXPIRY_HOURS,
     PASSWORD_RESET_EXPIRY_HOURS, SEND_WELCOME_EMAIL, ENABLE_SELF_REGISTRATION,
-    REQUIRE_EMAIL_ACTIVATION, ROLE_PRESETS, MANAGER_ASSIGNABLE_ROLES, SUPPORTED_LOCALES
+    REQUIRE_EMAIL_ACTIVATION, ACTIVATION_RESEND_RATE_PER_IP, ACTIVATION_RESEND_RATE_PER_EMAIL, ROLE_PRESETS, MANAGER_ASSIGNABLE_ROLES, SUPPORTED_LOCALES
 
 Top-level settings read by the forced-password-change middleware:
     ACCOUNTS_FORCE_PASSWORD_PROTECTED_PREFIXES  (default ("/",): the whole site)
@@ -31,6 +31,9 @@ DEFAULT_ACCOUNTS_FRAMEWORK = {
     "ACTIVATION_TOKEN_EXPIRY_HOURS": 24,
     "PASSWORD_RESET_EXPIRY_HOURS": 2,
     "SEND_WELCOME_EMAIL": False,
+    # Rate limits for auth/activate/resend/ (DRF format; None disables). See throttles.py.
+    "ACTIVATION_RESEND_RATE_PER_IP": "5/hour",
+    "ACTIVATION_RESEND_RATE_PER_EMAIL": "3/hour",
     # Roles (Django Group names) that a user holding accounts.manage_users, but who is not a
     # superuser, may assign to others. Empty by default: only superusers can assign roles
     # until the project lists the low-privilege roles it is happy to delegate.

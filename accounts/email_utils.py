@@ -102,7 +102,9 @@ def send_activation_email(user, token: str) -> None:
     activation_path = str(accounts_setting("ACTIVATION_PATH", "/activate-account"))
     activation_url = f"{_frontend_url()}{activation_path}?token={token}"
     expiry_hours = int(accounts_setting("ACTIVATION_TOKEN_EXPIRY_HOURS", ACTIVATION_TOKEN_EXPIRY_HOURS))
-    context = _common_context(user, activation_url=activation_url, expiry_hours=expiry_hours)
+    expiry_duration = f"{expiry_hours} {'hour' if expiry_hours == 1 else 'hours'}"
+    context = _common_context(user, activation_url=activation_url, expiry_hours=expiry_hours,
+                              expiry_duration=expiry_duration)
     subject = f"{_site_name()} — Please activate your account"
     send_template_email(
         subject=subject,

@@ -177,6 +177,8 @@ A dictionary in `settings.py`. Every key is optional.
 | `PASSWORD_RESET_PATH` | `"/reset-password"` | Frontend path of the reset page. The link is `FRONTEND_URL + PASSWORD_RESET_PATH + "?token=..."`. |
 | `ACTIVATION_TOKEN_EXPIRY_HOURS` | `24` | Lifetime of an activation link. An expired link is rejected (400) and the user can request a new one with `auth/activate/resend/`. The value is also shown in the email. |
 | `PASSWORD_RESET_EXPIRY_HOURS` | `2` | Lifetime of a password-reset link (single use). |
+| `ACTIVATION_RESEND_RATE_PER_IP` | `"5/hour"` | Rate limit for `auth/activate/resend/` per client IP (DRF rate format; `None` disables). Exceeding it returns 429. |
+| `ACTIVATION_RESEND_RATE_PER_EMAIL` | `"3/hour"` | Same endpoint, per email address, counted whether or not an account exists. Counters use Django's cache — use a shared cache (not the default per-process `LocMemCache`) when running several workers. |
 | `SEND_WELCOME_EMAIL` | `False` | Send a welcome email after registration when activation is not required. |
 | `ROLE_PRESETS` | `Administrator`, `User Manager` | Roles the Role Setup Wizard can create. See [section 7](#7-roles-and-permissions). |
 | `MANAGER_ASSIGNABLE_ROLES` | `()` | Role (Group) names that a non-superuser holding `accounts.manage_users` may assign. Empty means only superusers can assign roles. |
